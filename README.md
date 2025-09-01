@@ -17,3 +17,9 @@ Removes users from cohorts via CSV (UI + CLI).
 ## CLI
 ```bash
 php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv [--report=/path/out.csv] [--dry-run] [--username-standardise]
+
+## Tests & CI
+This plugin uses Moodle Plugin CI on GitHub Actions:
+- PHP lint, Moodle coding style (moodle-cs), PHPUnit, optional Behat.
+
+Run locally:

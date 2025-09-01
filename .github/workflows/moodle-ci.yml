@@ -1,0 +1,54 @@
+name: Moodle Plugin CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        moodle-branch: [MOODLE_405_STABLE, MOODLE_500_STABLE]
+        php: ['8.2']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer
+
+      - name: Install moodle-plugin-ci
+        run: |
+          composer create-project -n --no-dev moodlehq/moodle-plugin-ci ci
+          echo "$PWD/ci/bin" >> $GITHUB_PATH
+
+      - name: Initialise test environment
+        run: |
+          moodle-plugin-ci install --plugin ./ --db-type=pgsql --moodle-branch ${{ matrix.moodle-branch }}
+
+      - name: PHP Lint
+        run: moodle-plugin-ci phplint
+
+      - name: Coding style (moodle-cs)
+        run: moodle-plugin-ci phpcs --max-warnings=0
+
+      - name: PHPUnit
+        run: moodle-plugin-ci phpunit --fail-on-skipped
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.moodle-branch }}-php${{ matrix.php }}
+          path: |
+            workdir/*/moodledata/*.log
+            workdir/*/moodle/error.log
+            workdir/*/behat_faildump/**
+          if-no-files-found: ignore

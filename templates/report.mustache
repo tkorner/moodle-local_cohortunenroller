@@ -1,0 +1,31 @@
+<div class="local-cohortunenroller-report">
+  <h4>{{#str}} summary, local_cohortunenroller {{/str}}</h4>
+  <ul>
+    <li>{{#str}} rows_total, local_cohortunenroller {{/str}}: {{counters.total}}</li>
+    <li>{{#str}} rows_valid, local_cohortunenroller {{/str}}: {{counters.valid}}</li>
+    <li>{{#str}} rows_processed, local_cohortunenroller {{/str}}: {{counters.processed}}</li>
+    <li>{{#str}} rows_skipped, local_cohortunenroller {{/str}}: {{counters.skipped}}</li>
+    <li>{{#str}} rows_errors, local_cohortunenroller {{/str}}: {{counters.errors}}</li>
+  </ul>
+
+  <table class="generaltable">
+    <thead>
+      <tr>
+        <th>username</th>
+        <th>cohortid</th>
+        <th>cohortidnumber</th>
+        <th>status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#rows}}
+      <tr>
+        <td>{{username}}</td>
+        <td>{{cohortid}}</td>
+        <td>{{cohortidnumber}}</td>
+        <td>{{status_readable}}</td>
+      </tr>
+      {{/rows}}
+    </tbody>
+  </table>
+</div>

@@ -1,13 +1,23 @@
 <?php
-// phpcs:ignoreFile
-// CLI script to unenrol users from cohorts based on CSV.
+// This file is part of Moodle - https://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify it under the terms
+// of the GNU General Public License as published by the Free Software Foundation,
+// either version 3 of the License, or (at your option) any later version.
+//
+// @package    local_cohortunenroller
+// @subpackage cli
+// @copyright  2025 Thomas
+// @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+
+// CLI script to remove users from cohorts based on CSV rows.
+// The CSV must contain one of these header sets:
+//   - username,cohortid
+//   - username,cohortidnumber
+//
 // Usage examples:
 //   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --dry-run --delimiter=comma
 //   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --report=/path/out.csv --username-standardise --delimiter=semicolon
-//
-// CSV headers (one of):
-//   username,cohortid
-//   username,cohortidnumber
 
 define('CLI_SCRIPT', true);
 
@@ -16,13 +26,18 @@ require_once($CFG->libdir . '/clilib.php');
 require_once($CFG->libdir . '/csvlib.class.php');
 require_once($CFG->dirroot . '/cohort/lib.php');
 
+use local_cohortunenroller\local\processor;
+
+// -----------------------
+// Parse CLI options.
+// -----------------------
 list($options, $unrecognized) = cli_get_params(
     [
         'csv' => null,
         'report' => null,
         'dry-run' => false,
         'username-standardise' => false,
-        'delimiter' => 'comma', // comma | semicolon | tab
+        'delimiter' => 'comma', // comma | semicolon | tab  (matches core)
         'help' => false,
     ],
     [
@@ -34,14 +49,14 @@ $help = "Cohort Unenroller (CLI)
 Removes users from cohorts by CSV mapping (username + cohort id or idnumber).
 
 Options:
-  --csv=PATH                   Path to CSV input file (required)
-  --report=PATH                Optional path to write a result CSV (status per row)
-  --dry-run                    Validate only; do not change the database
-  --username-standardise       Trim + lowercase usernames before lookup
-  --delimiter=comma|semicolon|tab  CSV delimiter (default: comma)
-  -h, --help                   Show this help
+  --csv=PATH                        Path to CSV input file (required)
+  --report=PATH                     Optional path to write a result CSV (status per row)
+  --dry-run                         Validate only; do not change the database
+  --username-standardise            Trim + lowercase usernames before lookup
+  --delimiter=comma|semicolon|tab   CSV delimiter (default: comma)
+  -h, --help                        Show this help
 
-CSV formats:
+CSV headers (one of):
   username,cohortid
   username,cohortidnumber
 
@@ -65,131 +80,85 @@ $dryrun = !empty($options['dry-run']);
 $standardise = !empty($options['username-standardise']);
 $delimiter = $options['delimiter'] ?? 'comma';
 
-// Validate delimiter using core list.
+// Validate delimiter using core list (same keys as upload users).
 $allowed = array_keys(csv_import_reader::get_delimiter_list());
 if (!in_array($delimiter, $allowed, true)) {
     cli_error("Invalid --delimiter. Allowed: " . implode('|', $allowed), 1);
 }
 
-// Require site admin privileges for safety.
+// Safety: require site admin for membership changes.
 require_admin();
 
+// -----------------------
+// Read CSV from disk.
+// -----------------------
 if (!is_readable($csvpath)) {
     cli_error("CSV not readable: {$csvpath}", 2);
 }
-
 $content = file_get_contents($csvpath);
 if ($content === false || $content === '') {
     cli_error("CSV is empty or cannot be read: {$csvpath}", 4);
 }
 
+// -----------------------
+// Initialise CSV reader.
+// -----------------------
 $iid = csv_import_reader::get_new_iid('local_cohortunenroller_cli');
 $cir = new csv_import_reader($iid, 'local_cohortunenroller_cli');
 
 $encoding = 'utf-8';
-// Delimiter vom CLI-Flag (wie im Core).
 $cir->load_csv_content($content, $encoding, $delimiter);
-$columns = array_map('strtolower', $cir->get_columns() ?? []);
 
-// Reader initialisieren
+// Read header columns and initialise iterator (required before next()).
+$columns = array_map('strtolower', $cir->get_columns() ?? []);
 $cir->init();
+
+// Validate required headers.
 $hasid = in_array('cohortid', $columns, true);
 $hasidnumber = in_array('cohortidnumber', $columns, true);
 if (!in_array('username', $columns, true) || (!$hasid && !$hasidnumber)) {
-    $cir->close(); $cir->cleanup();
+    $cir->close();
+    $cir->cleanup();
     cli_error("Invalid headers. Expect 'username,cohortid' or 'username,cohortidnumber'.", 5);
 }
 
+// Map columns and collect normalised records for the processor.
 $colmap = array_flip($columns);
-$seenpairs = [];
-$results = [];
-$counters = ['total'=>0,'valid'=>0,'processed'=>0,'skipped'=>0,'errors'=>0];
-
-$transaction = $dryrun ? null : $DB->start_delegated_transaction();
+$rows = [];
 
 while ($row = $cir->next()) {
-    $counters['total']++;
-
-    // Username normalisieren.
-    $username = $row[$colmap['username']] ?? '';
-    $username = trim((string)$username);
-    if ($standardise) {
-        $username = core_text::strtolower($username);
-    }
-
-    $cohortid = null;
-    $cohortidnumber = null;
-
+    $rec = [
+        'username' => trim((string)($row[$colmap['username']] ?? '')),
+    ];
     if ($hasid) {
-        $raw = trim((string)($row[$colmap['cohortid']] ?? ''));
-        if ($raw !== '' && ctype_digit($raw)) {
-            $cohortid = (int)$raw;
+        $rawid = trim((string)($row[$colmap['cohortid']] ?? ''));
+        if ($rawid !== '' && ctype_digit($rawid)) {
+            $rec['cohortid'] = (int)$rawid;
         }
     }
     if ($hasidnumber) {
-        $cohortidnumber = trim((string)($row[$colmap['cohortidnumber']] ?? ''));
+        $rec['cohortidnumber'] = trim((string)($row[$colmap['cohortidnumber']] ?? ''));
     }
-
-    // Grundvalidierung.
-    if ($username === '' || ($cohortid === null && $cohortidnumber === null)) {
-        $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_invalid'];
-        $counters['errors']++; $counters['skipped']++;
-        continue;
-    }
-
-    // Duplikate vermeiden.
-    $pairkey = $username . '|' . ($cohortid !== null ? ('id:'.$cohortid) : ('idn:'.$cohortidnumber));
-    if (isset($seenpairs[$pairkey])) {
-        $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_duplicate'];
-        $counters['errors']++; $counters['skipped']++;
-        continue;
-    }
-    $seenpairs[$pairkey] = true;
-
-    // User lookup via username (nicht gelöschte Nutzer).
-    $user = $DB->get_record('user', ['username'=>$username, 'deleted'=>0], 'id', IGNORE_MISSING);
-    if (!$user) {
-        $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_usernotfound'];
-        $counters['errors']++; $counters['skipped']++;
-        continue;
-    }
-
-    // Cohort lookup via id oder idnumber.
-    if ($cohortid !== null) {
-        $cohort = $DB->get_record('cohort', ['id'=>$cohortid], 'id', IGNORE_MISSING);
-    } else {
-        $cohort = $DB->get_record('cohort', ['idnumber'=>$cohortidnumber], 'id', IGNORE_MISSING);
-    }
-    if (!$cohort) {
-        $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_cohortnotfound'];
-        $counters['errors']++; $counters['skipped']++;
-        continue;
-    }
-
-    // Mitglied?
-    $ismember = $DB->record_exists('cohort_members', ['cohortid'=>$cohort->id, 'userid'=>$user->id]);
-    if (!$ismember) {
-        // Info-Skip (kein Fehler).
-        $results[] = ['username'=>$username,'cohortid'=>$cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_notmember'];
-        $counters['valid']++; $counters['skipped']++;
-        continue;
-    }
-
-    // Entfernen, sofern nicht Dry-Run.
-    if (!$dryrun) {
-        cohort_remove_member($cohort->id, $user->id);
-    }
-
-    $results[] = ['username'=>$username,'cohortid'=>$cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_removed'];
-    $counters['valid']++; $counters['processed']++;
+    $rows[] = $rec;
 }
 
-if (!$dryrun) {
-    $transaction->allow_commit();
-}
-$cir->close(); $cir->cleanup();
+$cir->close();
+$cir->cleanup();
 
-// Zusammenfassung (STDOUT).
+// -----------------------
+// Execute business logic.
+// -----------------------
+$payload = processor::process($rows, [
+    'standardise' => $standardise,
+    'dryrun' => $dryrun,
+]);
+
+$results = $payload['results'];
+$counters = $payload['counters'];
+
+// -----------------------
+// Print summary.
+// -----------------------
 cli_writeln("Cohort Unenroller (CLI) finished.");
 cli_writeln("- Total rows    : {$counters['total']}");
 cli_writeln("- Valid rows    : {$counters['valid']}");
@@ -201,40 +170,39 @@ if ($dryrun) {
     cli_writeln("- Mode          : DRY RUN (no changes)");
 }
 
-// Optionaler Report.
+// -----------------------
+// Optional CSV report.
+// -----------------------
 if (!empty($reportpath)) {
     $dir = dirname($reportpath);
     if (!is_dir($dir) || !is_writable($dir)) {
         cli_problem("Report path not writable: {$reportpath}");
-    } else {
-        $fp = fopen($reportpath, 'w');
-        if ($fp === false) {
-            cli_problem("Failed to open report for writing: {$reportpath}");
-        } else {
-            fputcsv($fp, ['username', 'cohortid', 'cohortidnumber', 'status']);
-            foreach ($results as $r) {
-                $status = $r['status'];
-                $map = [
-                    'status_removed' => 'Removed',
-                    'status_notmember' => 'User not a member',
-                    'status_usernotfound' => 'User not found',
-                    'status_cohortnotfound' => 'Cohort not found',
-                    'status_duplicate' => 'Duplicate in file',
-                    'status_invalid' => 'Invalid data',
-                ];
-                $readable = $map[$status] ?? $status;
-                fputcsv($fp, [
-                    $r['username'] ?? '',
-                    isset($r['cohortid']) ? (string)$r['cohortid'] : '',
-                    $r['cohortidnumber'] ?? '',
-                    $readable
-                ]);
-            }
-            fclose($fp);
-            cli_writeln("Report written to: {$reportpath}");
+    } else if ($fp = fopen($reportpath, 'w')) {
+        // Human-friendly English statuses (CLI context).
+        $map = [
+            'status_removed'        => 'Removed',
+            'status_notmember'      => 'User not a member',
+            'status_usernotfound'   => 'User not found',
+            'status_cohortnotfound' => 'Cohort not found',
+            'status_duplicate'      => 'Duplicate in file',
+            'status_invalid'        => 'Invalid data',
+        ];
+
+        fputcsv($fp, ['username', 'cohortid', 'cohortidnumber', 'status']);
+        foreach ($results as $r) {
+            fputcsv($fp, [
+                $r['username'] ?? '',
+                isset($r['cohortid']) ? (string)$r['cohortid'] : '',
+                $r['cohortidnumber'] ?? '',
+                $map[$r['status']] ?? $r['status']
+            ]);
         }
+        fclose($fp);
+        cli_writeln("Report written to: {$reportpath}");
+    } else {
+        cli_problem("Failed to open report for writing: {$reportpath}");
     }
 }
 
-// Exit-Code: 0 wenn keine Fehlerzeilen; sonst 2.
+// Exit with 0 if no error rows, otherwise 2 (suitable for cron/monitoring).
 exit($counters['errors'] > 0 ? 2 : 0);
