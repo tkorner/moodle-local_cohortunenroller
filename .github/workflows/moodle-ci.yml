@@ -64,6 +64,8 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
         run: |
+          composer create-project -n --no-dev moodlehq/moodle-plugin-ci $RUNNER_TEMP/ci
+          echo "$RUNNER_TEMP/ci/bin" >> $GITHUB_PATH
           moodle-plugin-ci install \
             --plugin ./ \
             --db-type=pgsql \
@@ -73,7 +75,7 @@ jobs:
             --db-pass=postgres \
             --db-name=moodle \
             --branch ${{ matrix.branch }} \
-            --no-init
+           
 
       - name: PHP Lint
         run: moodle-plugin-ci phplint .
