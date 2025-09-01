@@ -39,6 +39,11 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer
+          ini-values: |
+            max_input_vars=5000
+            post_max_size=256M
+            upload_max_filesize=256M
+            memory_limit=512M
 
       - name: Install moodle-plugin-ci
         run: |
