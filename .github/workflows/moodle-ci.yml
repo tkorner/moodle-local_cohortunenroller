@@ -76,7 +76,7 @@ jobs:
             --no-init
 
       - name: PHP Lint
-        run: moodle-plugin-ci phplint
+        run: moodle-plugin-ci phplint --plugin ./
 
       - name: Coding style (moodle-cs)
         run: moodle-plugin-ci phpcs --max-warnings=0
