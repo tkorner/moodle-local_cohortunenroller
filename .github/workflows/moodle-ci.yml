@@ -57,9 +57,8 @@ jobs:
             sleep 2
           done
 
-      - name: Initialise test environment
+      - name: Install Moodle (skip test-suite init)
         env:
-          # Pass DB creds to mp-ci or set via flags below
           PGHOST: 127.0.0.1
           PGPORT: 5432
           PGUSER: postgres
@@ -73,7 +72,8 @@ jobs:
             --db-user=postgres \
             --db-pass=postgres \
             --db-name=moodle \
-            --branch ${{ matrix.branch }}
+            --branch ${{ matrix.branch }} \
+            --no-init
 
       - name: PHP Lint
         run: moodle-plugin-ci phplint
@@ -81,8 +81,10 @@ jobs:
       - name: Coding style (moodle-cs)
         run: moodle-plugin-ci phpcs --max-warnings=0
 
-      - name: PHPUnit
+      - name: PHPUnit (auto-inits phpunit only)
         run: moodle-plugin-ci phpunit --fail-on-skipped
+
+      # Behat absichtlich weggelassen
 
       - name: Upload failure artifacts
         if: failure()
