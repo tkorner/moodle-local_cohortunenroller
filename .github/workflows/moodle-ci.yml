@@ -13,6 +13,22 @@ jobs:
       matrix:
         branch: [MOODLE_405_STABLE, MOODLE_500_STABLE]
         php: ['8.2']
+
+    services:
+      postgres:
+        image: postgres:14
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,9 +45,30 @@ jobs:
           composer create-project -n --no-dev moodlehq/moodle-plugin-ci ci
           echo "$PWD/ci/bin" >> $GITHUB_PATH
 
-      - name: Initialise test environment
+      - name: Wait for Postgres
         run: |
-          moodle-plugin-ci install --plugin ./ --db-type=pgsql --branch ${{ matrix.branch }}
+          for i in {1..30}; do
+            pg_isready -h 127.0.0.1 -p 5432 -U postgres && break
+            sleep 2
+          done
+
+      - name: Initialise test environment
+        env:
+          # Pass DB creds to mp-ci or set via flags below
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          moodle-plugin-ci install \
+            --plugin ./ \
+            --db-type=pgsql \
+            --db-host=127.0.0.1 \
+            --db-port=5432 \
+            --db-user=postgres \
+            --db-pass=postgres \
+            --db-name=moodle \
+            --branch ${{ matrix.branch }}
 
       - name: PHP Lint
         run: moodle-plugin-ci phplint
