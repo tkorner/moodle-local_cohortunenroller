@@ -76,11 +76,10 @@ jobs:
             --no-init
 
       - name: PHP Lint
-        run: moodle-plugin-ci phplint --plugin ./
+        run: moodle-plugin-ci phplint moodle/local/cohortunenroller --not-paths=ci
 
       - name: Coding style (moodle-cs)
-        run: moodle-plugin-ci phpcs --max-warnings=0
-
+        run: moodle-plugin-ci phpcs --max-warnings=0 moodle/local/cohortunenroller --not-paths=ci
       - name: PHPUnit (auto-inits phpunit only)
         run: moodle-plugin-ci phpunit --fail-on-skipped
 
