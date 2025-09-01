@@ -87,10 +87,12 @@ $iid = csv_import_reader::get_new_iid('local_cohortunenroller_cli');
 $cir = new csv_import_reader($iid, 'local_cohortunenroller_cli');
 
 $encoding = 'utf-8';
-// NEU: Delimiter vom CLI-Flag (wie im Core).
+// Delimiter vom CLI-Flag (wie im Core).
 $cir->load_csv_content($content, $encoding, $delimiter);
 $columns = array_map('strtolower', $cir->get_columns() ?? []);
 
+// Reader initialisieren
+$cir->init();
 $hasid = in_array('cohortid', $columns, true);
 $hasidnumber = in_array('cohortidnumber', $columns, true);
 if (!in_array('username', $columns, true) || (!$hasid && !$hasidnumber)) {

@@ -79,11 +79,14 @@ if ($mform->is_cancelled()) {
     $cir = new csv_import_reader($iid, 'local_cohortunenroller');
 
     $encoding = 'utf-8';
-    // NEU: Delimiter aus dem Formular wie im Core.
+    // Delimiter aus dem Formular wie im Core.
     $delimiter = $data->delimiter ?? 'comma';
 
     $cir->load_csv_content($filecontent, $encoding, $delimiter);
     $columns = array_map('strtolower', $cir->get_columns() ?? []);
+
+    // Reader initialisieren, sonst liefert next() keine Zeilen
+    $cir->init();
 
     $hasid = in_array('cohortid', $columns, true);
     $hasidnumber = in_array('cohortidnumber', $columns, true);
