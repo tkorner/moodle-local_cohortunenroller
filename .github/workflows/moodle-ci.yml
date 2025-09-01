@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        moodle-branch: [MOODLE_405_STABLE, MOODLE_500_STABLE]
+        branch: [MOODLE_405_STABLE, MOODLE_500_STABLE]
         php: ['8.2']
     steps:
       - name: Checkout
@@ -31,7 +31,7 @@ jobs:
 
       - name: Initialise test environment
         run: |
-          moodle-plugin-ci install --plugin ./ --db-type=pgsql --moodle-branch ${{ matrix.moodle-branch }}
+          moodle-plugin-ci install --plugin ./ --db-type=pgsql --branch ${{ matrix.branch }}
 
       - name: PHP Lint
         run: moodle-plugin-ci phplint
@@ -46,7 +46,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.moodle-branch }}-php${{ matrix.php }}
+          name: logs-${{ matrix.branch }}-php${{ matrix.php }}
           path: |
             workdir/*/moodledata/*.log
             workdir/*/moodle/error.log
