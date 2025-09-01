@@ -75,7 +75,7 @@ jobs:
             --db-pass=postgres \
             --db-name=moodle \
             --branch ${{ matrix.branch }} \
-           
+            --no-init
 
       - name: PHP Lint
         run: moodle-plugin-ci phplint .
