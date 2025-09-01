@@ -1,8 +1,9 @@
 <?php
 // phpcs:ignoreFile
 // CLI script to unenrol users from cohorts based on CSV.
-// Usage example:
-//   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --report=/path/out.csv --dry-run --username-standardise
+// Usage examples:
+//   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --dry-run --delimiter=comma
+//   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --report=/path/out.csv --username-standardise --delimiter=semicolon
 //
 // CSV headers (one of):
 //   username,cohortid
@@ -21,6 +22,7 @@ list($options, $unrecognized) = cli_get_params(
         'report' => null,
         'dry-run' => false,
         'username-standardise' => false,
+        'delimiter' => 'comma', // comma | semicolon | tab
         'help' => false,
     ],
     [
@@ -36,6 +38,7 @@ Options:
   --report=PATH                Optional path to write a result CSV (status per row)
   --dry-run                    Validate only; do not change the database
   --username-standardise       Trim + lowercase usernames before lookup
+  --delimiter=comma|semicolon|tab  CSV delimiter (default: comma)
   -h, --help                   Show this help
 
 CSV formats:
@@ -43,9 +46,8 @@ CSV formats:
   username,cohortidnumber
 
 Examples:
-  php local/cohortunenroller/cli/unenrol.php --csv=/data/in.csv --dry-run
-  php local/cohortunenroller/cli/unenrol.php --csv=/data/in.csv --report=/data/out.csv
-
+  php local/cohortunenroller/cli/unenrol.php --csv=/data/in.csv --dry-run --delimiter=tab
+  php local/cohortunenroller/cli/unenrol.php --csv=/data/in.csv --report=/data/out.csv --delimiter=semicolon
 ";
 
 if (!empty($options['help'])) {
@@ -61,17 +63,19 @@ $csvpath = $options['csv'];
 $reportpath = $options['report'] ?? null;
 $dryrun = !empty($options['dry-run']);
 $standardise = !empty($options['username-standardise']);
+$delimiter = $options['delimiter'] ?? 'comma';
 
-// Require site admin privileges for safety (matches capability used in UI).
+// Validate delimiter using core list.
+$allowed = array_keys(csv_import_reader::get_delimiter_list());
+if (!in_array($delimiter, $allowed, true)) {
+    cli_error("Invalid --delimiter. Allowed: " . implode('|', $allowed), 1);
+}
+
+// Require site admin privileges for safety.
 require_admin();
 
 if (!is_readable($csvpath)) {
     cli_error("CSV not readable: {$csvpath}", 2);
-}
-
-$filesize = filesize($csvpath);
-if ($filesize === false) {
-    cli_error("Cannot stat CSV file: {$csvpath}", 3);
 }
 
 $content = file_get_contents($csvpath);
@@ -83,7 +87,7 @@ $iid = csv_import_reader::get_new_iid('local_cohortunenroller_cli');
 $cir = new csv_import_reader($iid, 'local_cohortunenroller_cli');
 
 $encoding = 'utf-8';
-$delimiter = csv_import_reader::detect_delimiter($content);
+// NEU: Delimiter vom CLI-Flag (wie im Core).
 $cir->load_csv_content($content, $encoding, $delimiter);
 $columns = array_map('strtolower', $cir->get_columns() ?? []);
 
@@ -131,7 +135,7 @@ while ($row = $cir->next()) {
         continue;
     }
 
-    // Duplikate vermeiden (per Eingabedatei).
+    // Duplikate vermeiden.
     $pairkey = $username . '|' . ($cohortid !== null ? ('id:'.$cohortid) : ('idn:'.$cohortidnumber));
     if (isset($seenpairs[$pairkey])) {
         $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_duplicate'];
@@ -140,7 +144,7 @@ while ($row = $cir->next()) {
     }
     $seenpairs[$pairkey] = true;
 
-    // User lookup via username (nur aktive, nicht gelöschte Nutzer).
+    // User lookup via username (nicht gelöschte Nutzer).
     $user = $DB->get_record('user', ['username'=>$username, 'deleted'=>0], 'id', IGNORE_MISSING);
     if (!$user) {
         $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_usernotfound'];
@@ -183,18 +187,19 @@ if (!$dryrun) {
 }
 $cir->close(); $cir->cleanup();
 
-// Ausgabe (STDOUT).
+// Zusammenfassung (STDOUT).
 cli_writeln("Cohort Unenroller (CLI) finished.");
 cli_writeln("- Total rows    : {$counters['total']}");
 cli_writeln("- Valid rows    : {$counters['valid']}");
 cli_writeln("- Processed     : {$counters['processed']}");
 cli_writeln("- Skipped       : {$counters['skipped']}");
 cli_writeln("- Error rows    : {$counters['errors']}");
+cli_writeln("- Delimiter     : {$delimiter}");
 if ($dryrun) {
     cli_writeln("- Mode          : DRY RUN (no changes)");
 }
 
-// Optionaler Report als Datei.
+// Optionaler Report.
 if (!empty($reportpath)) {
     $dir = dirname($reportpath);
     if (!is_dir($dir) || !is_writable($dir)) {
@@ -207,7 +212,6 @@ if (!empty($reportpath)) {
             fputcsv($fp, ['username', 'cohortid', 'cohortidnumber', 'status']);
             foreach ($results as $r) {
                 $status = $r['status'];
-                // Simple human-readable mapping (without lang subsystem).
                 $map = [
                     'status_removed' => 'Removed',
                     'status_notmember' => 'User not a member',
@@ -215,7 +219,6 @@ if (!empty($reportpath)) {
                     'status_cohortnotfound' => 'Cohort not found',
                     'status_duplicate' => 'Duplicate in file',
                     'status_invalid' => 'Invalid data',
-                    'status_error' => 'Error',
                 ];
                 $readable = $map[$status] ?? $status;
                 fputcsv($fp, [
@@ -231,5 +234,5 @@ if (!empty($reportpath)) {
     }
 }
 
-// Exit-Code: 0 wenn keine echten Fehlerzeilen? Wir werten 'errors' als 0 OK, sonst 2.
+// Exit-Code: 0 wenn keine Fehlerzeilen; sonst 2.
 exit($counters['errors'] > 0 ? 2 : 0);

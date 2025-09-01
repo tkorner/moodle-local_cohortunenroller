@@ -19,19 +19,32 @@ require_once($CFG->dirroot . '/cohort/lib.php');
 class local_cohortunenroller_form extends moodleform {
     public function definition() {
         $mform = $this->_form;
+
+        // CSV-Datei.
         $mform->addElement('filepicker', 'csvfile', get_string('uploadcsv', 'local_cohortunenroller'),
             null, ['maxbytes' => 0, 'accepted_types' => ['.csv']]);
         $mform->addRule('csvfile', null, 'required', null, 'client');
+
+        // Hinweistext.
         $mform->addElement('static', 'csvhelp', '', get_string('csvhelp', 'local_cohortunenroller'));
+
+        // Delimiter wie im Core-Importer.
+        $mform->addElement('select', 'delimiter', get_string('csvdelimiter', 'admin'), csv_import_reader::get_delimiter_list());
+        $mform->setDefault('delimiter', 'comma');
+
+        // Optional: Usernames standardisieren (trim + lowercase).
         $mform->addElement('advcheckbox', 'standardise', get_string('standardise_usernames', 'local_cohortunenroller'), '');
+
+        // Dry run.
         $mform->addElement('advcheckbox', 'dryrun', get_string('dryrun', 'local_cohortunenroller'), '');
+
         $mform->addElement('submit', 'submitbutton', get_string('submit', 'local_cohortunenroller'));
     }
 }
 
 $mform = new local_cohortunenroller_form();
 
-// Simple download action using session-stored results.
+// Download der Result-CSV aus der Session.
 $download = optional_param('download', 0, PARAM_BOOL);
 if ($download && isset($SESSION->local_cohortunenroller_report)) {
     $rows = $SESSION->local_cohortunenroller_report['rows'] ?? [];
@@ -53,6 +66,7 @@ if ($download && isset($SESSION->local_cohortunenroller_report)) {
 if ($mform->is_cancelled()) {
     redirect(new moodle_url('/admin/search.php?query=Cohort+Unenroller'));
 } else if ($data = $mform->get_data()) {
+
     $filecontent = $mform->get_file_content('csvfile');
     if (!$filecontent) {
         echo $OUTPUT->notification(get_string('error_nofile', 'local_cohortunenroller'), 'error');
@@ -65,7 +79,9 @@ if ($mform->is_cancelled()) {
     $cir = new csv_import_reader($iid, 'local_cohortunenroller');
 
     $encoding = 'utf-8';
-    $delimiter = csv_import_reader::detect_delimiter($filecontent);
+    // NEU: Delimiter aus dem Formular wie im Core.
+    $delimiter = $data->delimiter ?? 'comma';
+
     $cir->load_csv_content($filecontent, $encoding, $delimiter);
     $columns = array_map('strtolower', $cir->get_columns() ?? []);
 
@@ -92,9 +108,9 @@ if ($mform->is_cancelled()) {
     while ($row = $cir->next()) {
         $counters['total']++;
 
-        // Username normalisieren (trim; optional lowercase).
+        // Username normalisieren.
         $username = $row[$colmap['username']] ?? '';
-        $username = trim($username);
+        $username = trim((string)$username);
         if ($standardise) {
             $username = core_text::strtolower($username);
         }
@@ -119,7 +135,7 @@ if ($mform->is_cancelled()) {
             continue;
         }
 
-        // Duplikate in der Datei vermeiden (Key: username|cohortid/cohortidnumber).
+        // Duplikate pro Datei.
         $pairkey = $username . '|' . ($cohortid !== null ? ('id:'.$cohortid) : ('idn:'.$cohortidnumber));
         if (isset($seenpairs[$pairkey])) {
             $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_duplicate'];
@@ -128,7 +144,7 @@ if ($mform->is_cancelled()) {
         }
         $seenpairs[$pairkey] = true;
 
-        // User lookup via username.
+        // User lookup via username (nicht gelöschte Nutzer).
         $user = $DB->get_record('user', ['username' => $username, 'deleted' => 0], 'id', IGNORE_MISSING);
         if (!$user) {
             $results[] = ['username'=>$username,'cohortid'=>$cohortid,'cohortidnumber'=>$cohortidnumber,'status'=>'status_usernotfound'];
@@ -151,17 +167,18 @@ if ($mform->is_cancelled()) {
         // Mitglied?
         $ismember = $DB->record_exists('cohort_members', ['cohortid'=>$cohort->id, 'userid'=>$user->id]);
         if (!$ismember) {
-            $results[] = ['username'=>$username,'cohortid'=>$cohortid ?? $cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_notmember'];
-            $counters['valid']++; $counters['skipped']++; // Info-Skip
+            // Info-Skip (kein Fehler).
+            $results[] = ['username'=>$username,'cohortid'=>$cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_notmember'];
+            $counters['valid']++; $counters['skipped']++;
             continue;
         }
 
-        // Entfernen.
+        // Entfernen, sofern nicht Dry-Run.
         if (!$dryrun) {
             cohort_remove_member($cohort->id, $user->id);
         }
 
-        $results[] = ['username'=>$username,'cohortid'=>$cohortid ?? $cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_removed'];
+        $results[] = ['username'=>$username,'cohortid'=>$cohort->id,'cohortidnumber'=>$cohortidnumber ?? '', 'status'=>'status_removed'];
         $counters['valid']++; $counters['processed']++;
     }
 
@@ -171,13 +188,12 @@ if ($mform->is_cancelled()) {
     $cir->close();
     $cir->cleanup();
 
-    // Ergebnisse in Session für Download ablegen.
+    // Ergebnisse für Download ablegen und anzeigen.
     foreach ($results as &$r) {
         $r['status_readable'] = get_string($r['status'], 'local_cohortunenroller');
     }
     $SESSION->local_cohortunenroller_report = ['rows' => $results, 'counters' => $counters];
 
-    // Ausgabe
     echo $OUTPUT->heading(get_string('results', 'local_cohortunenroller'), 3);
     if ($dryrun) {
         echo $OUTPUT->notification(get_string('dryrun_notice', 'local_cohortunenroller'), 'info');
@@ -192,7 +208,6 @@ if ($mform->is_cancelled()) {
     ], [], 'ul');
     echo html_writer::div(html_writer::tag('h4', get_string('summary', 'local_cohortunenroller')) . $summary);
 
-    // Tabelle
     $table = new html_table();
     $table->head = ['username', 'cohortid', 'cohortidnumber', 'status'];
     foreach ($results as $r) {
@@ -205,11 +220,9 @@ if ($mform->is_cancelled()) {
     }
     echo html_writer::table($table);
 
-    // Download-Button
     $dlurl = new moodle_url('/local/cohortunenroller/index.php', ['download' => 1, 'sesskey' => sesskey()]);
     echo $OUTPUT->single_button($dlurl, get_string('download', 'local_cohortunenroller'));
 
-    // Back link
     echo $OUTPUT->single_button(new moodle_url('/local/cohortunenroller/index.php'), get_string('uploadcsv', 'local_cohortunenroller'));
 } else {
     $mform->display();
