@@ -1,15 +1,28 @@
 <?php
-// This file is part of Moodle - https://moodle.org/
+// This file is part of Moodle - http://moodle.org/
 //
-// Moodle is free software: you can redistribute it and/or modify it under the terms
-// of the GNU General Public License as published by the Free Software Foundation,
-// either version 3 of the License, or (at your option) any later version.
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
 //
-// @package    local_cohortunenroller
-// @copyright  2025 Thomas
-// @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-require('../../config.php');
+/**
+ * Index file.
+ *
+ * @package   local_cohortunenroller
+ * @copyright Thomas Korner <thomas.korner@edu.zh.ch>
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+require_once('../../config.php');
 
 require_login();
 $context = context_system::instance();
@@ -48,7 +61,7 @@ if ($download) {
                 $r['username'] ?? '',
                 isset($r['cohortid']) ? (string)$r['cohortid'] : '',
                 $r['cohortidnumber'] ?? '',
-                $r['status_readable'] ?? ($r['status'] ?? '')
+                $r['status_readable'] ?? ($r['status'] ?? ''),
             ]);
         }
         $export->download_file();
@@ -77,7 +90,7 @@ if ($mform->is_cancelled()) {
     $cir = new csv_import_reader($iid, 'local_cohortunenroller');
 
     $encoding = 'utf-8';
-    $delimiter = $data->delimiter ?? 'comma'; // 'comma'|'semicolon'|'tab' as provided by core.
+    $delimiter = $data->delimiter ?? 'comma'; // Choices 'comma'|'semicolon'|'tab' as provided by core.
     $cir->load_csv_content($filecontent, $encoding, $delimiter);
 
     // Read header columns and initialise iterator.
@@ -154,7 +167,12 @@ if ($mform->is_cancelled()) {
     // Download button (protected by sesskey) and back-to-upload button.
     $dlurl = new moodle_url('/local/cohortunenroller/index.php', ['download' => 1, 'sesskey' => sesskey()]);
     echo $OUTPUT->single_button($dlurl, get_string('download', 'local_cohortunenroller'));
-    echo $OUTPUT->single_button(new moodle_url('/local/cohortunenroller/index.php'), get_string('uploadcsv', 'local_cohortunenroller'));
+    echo $OUTPUT->single_button(
+        new moodle_url(
+            '/local/cohortunenroller/index.php'
+        ),
+        get_string('uploadcsv', 'local_cohortunenroller')
+    );
 } else {
     // First page load: show the upload form.
     $mform->display();

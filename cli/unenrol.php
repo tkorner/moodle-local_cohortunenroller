@@ -1,23 +1,26 @@
 <?php
-// This file is part of Moodle - https://moodle.org/
+// This file is part of Moodle - http://moodle.org/
 //
-// Moodle is free software: you can redistribute it and/or modify it under the terms
-// of the GNU General Public License as published by the Free Software Foundation,
-// either version 3 of the License, or (at your option) any later version.
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
 //
-// @package    local_cohortunenroller
-// @subpackage cli
-// @copyright  2025 Thomas
-// @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-// CLI script to remove users from cohorts based on CSV rows.
-// The CSV must contain one of these header sets:
-//   - username,cohortid
-//   - username,cohortidnumber
-//
-// Usage examples:
-//   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --dry-run --delimiter=comma
-//   php local/cohortunenroller/cli/unenrol.php --csv=/path/in.csv --report=/path/out.csv --username-standardise --delimiter=semicolon
+/**
+ * CLI script to remove users from cohorts by CSV mapping.
+ *
+ * @package   local_cohortunenroller
+ * @copyright Thomas Korner <thomas.korner@edu.zh.ch>
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 
 define('CLI_SCRIPT', true);
 
@@ -28,16 +31,14 @@ require_once($CFG->dirroot . '/cohort/lib.php');
 
 use local_cohortunenroller\local\processor;
 
-// -----------------------
 // Parse CLI options.
-// -----------------------
 list($options, $unrecognized) = cli_get_params(
     [
         'csv' => null,
         'report' => null,
         'dry-run' => false,
         'username-standardise' => false,
-        'delimiter' => 'comma', // comma | semicolon | tab  (matches core)
+        'delimiter' => 'comma', // Options: comma | semicolon | tab  (matches core).
         'help' => false,
     ],
     [
@@ -89,9 +90,7 @@ if (!in_array($delimiter, $allowed, true)) {
 // Safety: require site admin for membership changes.
 require_admin();
 
-// -----------------------
 // Read CSV from disk.
-// -----------------------
 if (!is_readable($csvpath)) {
     cli_error("CSV not readable: {$csvpath}", 2);
 }
@@ -100,9 +99,7 @@ if ($content === false || $content === '') {
     cli_error("CSV is empty or cannot be read: {$csvpath}", 4);
 }
 
-// -----------------------
 // Initialise CSV reader.
-// -----------------------
 $iid = csv_import_reader::get_new_iid('local_cohortunenroller_cli');
 $cir = new csv_import_reader($iid, 'local_cohortunenroller_cli');
 
@@ -145,9 +142,7 @@ while ($row = $cir->next()) {
 $cir->close();
 $cir->cleanup();
 
-// -----------------------
 // Execute business logic.
-// -----------------------
 $payload = processor::process($rows, [
     'standardise' => $standardise,
     'dryrun' => $dryrun,
@@ -156,9 +151,7 @@ $payload = processor::process($rows, [
 $results = $payload['results'];
 $counters = $payload['counters'];
 
-// -----------------------
 // Print summary.
-// -----------------------
 cli_writeln("Cohort Unenroller (CLI) finished.");
 cli_writeln("- Total rows    : {$counters['total']}");
 cli_writeln("- Valid rows    : {$counters['valid']}");
@@ -170,9 +163,7 @@ if ($dryrun) {
     cli_writeln("- Mode          : DRY RUN (no changes)");
 }
 
-// -----------------------
 // Optional CSV report.
-// -----------------------
 if (!empty($reportpath)) {
     $dir = dirname($reportpath);
     if (!is_dir($dir) || !is_writable($dir)) {
@@ -194,7 +185,7 @@ if (!empty($reportpath)) {
                 $r['username'] ?? '',
                 isset($r['cohortid']) ? (string)$r['cohortid'] : '',
                 $r['cohortidnumber'] ?? '',
-                $map[$r['status']] ?? $r['status']
+                $map[$r['status']] ?? $r['status'],
             ]);
         }
         fclose($fp);
