@@ -1,3 +1,4 @@
+[![Moodle plugin CI](https://github.com/tkorner/moodle-local_cohortunenroller/actions/workflows/moodle-ci.yml/badge.svg)](https://github.com/tkorner/moodle-local_cohortunenroller/actions/workflows/moodle-ci.yml)
 # Cohort Unenroller (Moodle local plugin)
 
 Removes users from cohorts via CSV (UI + CLI).  
