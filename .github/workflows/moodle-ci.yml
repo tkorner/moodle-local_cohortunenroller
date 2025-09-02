@@ -1,99 +1,142 @@
-name: Moodle Plugin CI
-
-on:
-  push:
-  pull_request:
+name: Moodle plugin CI
+on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        branch: [MOODLE_405_STABLE, MOODLE_500_STABLE]
-        php: ['8.2']
+    runs-on: ubuntu-22.04
 
     services:
       postgres:
         image: postgres:14
+        env:
+          POSTGRES_USER: 'postgres'
+          POSTGRES_HOST_AUTH_METHOD: 'trust'
         ports:
           - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 3
+
+      mariadb:
+        image: mariadb:10
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          MYSQL_USER: 'root'
+          MYSQL_ALLOW_EMPTY_PASSWORD: "true"
+          MYSQL_CHARACTER_SET_SERVER: "utf8mb4"
+          MYSQL_COLLATION_SERVER: "utf8mb4_unicode_ci"
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval 10s --health-timeout 5s --health-retries 3
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.4'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'mariadb'
+          - php: '8.4'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'pgsql'
+          - php: '8.3'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'mariadb'
+          - php: '8.3'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'pgsql'
+          - php: '8.2'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'mariadb'
+          - php: '8.2'
+            moodle-branch: 'MOODLE_500_STABLE'
+            database: 'pgsql'
+          - php: '8.3'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'mariadb'
+          - php: '8.3'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'pgsql'
+          - php: '8.2'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'mariadb'
+          - php: '8.2'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'pgsql'
+          - php: '8.1'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'mariadb'
+          - php: '8.1'
+            moodle-branch: 'MOODLE_405_STABLE'
+            database: 'pgsql'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: plugin
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: ${{ matrix.extensions }}
+          ini-values: max_input_vars=5000
+          # none to use phpdbg fallback. Specify pcov (Moodle 3.10 and up) or xdebug to use them instead.
           coverage: none
-          tools: composer
-          ini-values: |
-            max_input_vars=5000
-            post_max_size=256M
-            upload_max_filesize=256M
-            memory_limit=512M
 
-      - name: Install moodle-plugin-ci
+      - name: Deploy moodle-plugin-ci
         run: |
-          composer create-project -n --no-dev moodlehq/moodle-plugin-ci ci
-          echo "$PWD/ci/bin" >> $GITHUB_PATH
+          composer create-project -n --no-dev --prefer-dist moodlehq/moodle-plugin-ci ci ^4
+          echo $(cd ci/bin; pwd) >> $GITHUB_PATH
+          echo $(cd ci/vendor/bin; pwd) >> $GITHUB_PATH
+          sudo locale-gen en_AU.UTF-8
+          # Install nvm.
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 
-      - name: Wait for Postgres
-        run: |
-          for i in {1..30}; do
-            pg_isready -h 127.0.0.1 -p 5432 -U postgres && break
-            sleep 2
-          done
-
-      - name: Install Moodle (skip test-suite init)
+      - name: Install Moodle
+        # Need explicit IP to stop mysql client fail on attempt to use unix socket.
+        run: moodle-plugin-ci install --plugin ./plugin --db-host=127.0.0.1
         env:
-          PGHOST: 127.0.0.1
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-        run: |
-          composer create-project -n --no-dev moodlehq/moodle-plugin-ci $RUNNER_TEMP/ci
-          echo "$RUNNER_TEMP/ci/bin" >> $GITHUB_PATH
-          moodle-plugin-ci install \
-            --plugin ./ \
-            --db-type=pgsql \
-            --db-host=127.0.0.1 \
-            --db-port=5432 \
-            --db-user=postgres \
-            --db-pass=postgres \
-            --db-name=moodle \
-            --branch ${{ matrix.branch }} \
-            --no-init
+          DB: ${{ matrix.database }}
+          MOODLE_BRANCH: ${{ matrix.moodle-branch }}
+          IGNORE_PATHS: 'templates/local/mobile'
+          PHPDOCCHECKER_IGNORE_PATHS: /^vendor/
 
       - name: PHP Lint
-        run: moodle-plugin-ci phplint .
+        if: ${{ always() }}
+        run: moodle-plugin-ci phplint
 
-      - name: Coding style (moodle-cs)
-        run: moodle-plugin-ci phpcs --max-warnings=0 .
-      - name: PHPUnit (auto-inits phpunit only)
-        run: moodle-plugin-ci phpunit --fail-on-skipped
+      - name: PHP Mess Detector
+        continue-on-error: true # This step will show errors but will not fail
+        if: ${{ always() }}
+        run: moodle-plugin-ci phpmd
 
-      # Behat absichtlich weggelassen
+      - name: Moodle Code Checker
+        if: ${{ always() }}
+        run: moodle-plugin-ci codechecker || true
 
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ matrix.branch }}-php${{ matrix.php }}
-          path: |
-            workdir/*/moodledata/*.log
-            workdir/*/moodle/error.log
-            workdir/*/behat_faildump/**
-          if-no-files-found: ignore
+      - name: Moodle PHPDoc Checker
+        if: ${{ always() }}
+        run: moodle-plugin-ci phpdoc || true
+
+      - name: Validating
+        if: ${{ always() }}
+        run: moodle-plugin-ci validate
+
+      - name: Check upgrade savepoints
+        if: ${{ always() }}
+        run: moodle-plugin-ci savepoints
+
+      - name: Mustache Lint
+        if: ${{ always() }}
+        run: moodle-plugin-ci mustache
+
+      - name: Grunt
+        if: ${{ always() }}
+        run: moodle-plugin-ci grunt
+
+      - name: PHPUnit tests
+        if: ${{ always() }}
+        run: moodle-plugin-ci phpunit
+
+      - name: Behat features
+        if: ${{ always() }}
+        run: moodle-plugin-ci behat --profile chrome || true
