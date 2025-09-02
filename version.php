@@ -25,7 +25,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_cohortunenroller';
-$plugin->version   = 2025090202;   // YYYYMMDDXX.
+$plugin->version   = 2025090203;   // YYYYMMDDXX.
 $plugin->requires  = 2024052000;   // Moodle 4.5.
 $plugin->maturity  = MATURITY_BETA;
-$plugin->release   = '0.4.1';
+$plugin->release   = '0.4.2';
